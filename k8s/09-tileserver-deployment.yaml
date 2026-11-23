@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tileserver
+  namespace: kmc-gis
+  labels:
+    app.kubernetes.io/name: kmc-gis-platform
+    app.kubernetes.io/component: raster-tileserver
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kmc-gis-platform
+      app.kubernetes.io/component: raster-tileserver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kmc-gis-platform
+        app.kubernetes.io/component: raster-tileserver
+    spec:
+      containers:
+        - name: tileserver
+          image: maptiler/tileserver-gl:v5.7.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ -f /data/config.json ]; then
+                exec node /usr/src/app/index.js -c /data/config.json -p 8080
+              else
+                exec node /usr/src/app/index.js /data -p 8080
+              fi
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1500m"
+              memory: "2048Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: tileserver-storage
+              mountPath: /data
+      volumes:
+        - name: tileserver-storage
+          persistentVolumeClaim:
+            claimName: tileserver-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tileserver
+  namespace: kmc-gis
+  labels:
+    app.kubernetes.io/name: kmc-gis-platform
+    app.kubernetes.io/component: raster-tileserver
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app.kubernetes.io/name: kmc-gis-platform
+    app.kubernetes.io/component: raster-tileserver

@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kmc-gis
+
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  - 01-secrets-template.yaml
+  - 02-storage.yaml
+  - 03-postgres-statefulset.yaml
+  - 04-pgbouncer-deployment.yaml
+  - 05-redis-deployment.yaml
+  - 06-backend-deployment.yaml
+  - 07-frontend-deployment.yaml
+  - 08-geoportal-deployment.yaml
+  - 09-martin-deployment.yaml
+  - 09-tileserver-deployment.yaml
+  - 10-ingress.yaml
+  - 11-network-policies.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: kathmandu-metropolitan-city
+  app.kubernetes.io/managed-by: kustomize

@@ -1,0 +1,29 @@
+# ============================================================
+# GeoPortal .dockerignore — "Build Once, Run Anywhere"
+# Never include .env files, keys, or build artifacts in image context
+# ============================================================
+.git
+.gitignore
+.env
+.env.*
+*.pem
+*.key
+*.crt
+secrets/
+node_modules
+package-lock.json
+.next
+out
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.flv
+*.wmv
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun-debug.log*
+**/*.test.js
+!docker-entrypoint.sh

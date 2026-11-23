@@ -1,0 +1,13 @@
+# KMC-GIS-SERVER Optional TLS Overlay
+# Enables the HTTPS listener after real certificates are installed in ./nginx/ssl.
+#
+#   ls nginx/ssl/fullchain.pem nginx/ssl/privkey.pem
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+#
+# Only nginx publishes the TLS port; every other service stays internal.
+services:
+  nginx:
+    ports:
+      - "${HOST_SSL_PORT:-443}:443"
+    volumes:
+      - ./nginx/tls.conf:/etc/nginx/conf.d/tls.conf:ro

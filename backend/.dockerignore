@@ -1,0 +1,21 @@
+# ============================================================
+# Backend .dockerignore — Never send secrets or local state to Docker build context
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.env.*
+*.pem
+*.key
+*.crt
+secrets/
+.git
+.gitignore
+.venv
+venv/
+.pytest_cache/
+uploads/
+data/
+!requirements.txt
+

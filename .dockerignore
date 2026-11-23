@@ -1,0 +1,43 @@
+# ============================================================
+# Root .dockerignore — "Build Once, Run Anywhere"
+# Prevents environment files, secrets, certificates, recovery
+# archives, runtime geodata and local volumes from ever entering
+# a Docker build context.
+#
+# Note: image builds use ./frontend, ./geoportal and ./backend
+# contexts with their own .dockerignore files; this file keeps any
+# root-level context equally clean.
+# ============================================================
+.git
+.gitignore
+.env
+.env.*
+!**/.env.example
+*.pem
+*.key
+*.crt
+secrets/
+_archive/
+.aistudio/
+node_modules/
+package-lock.json
+dist/
+build/
+.next/
+data/
+uploads/
+__pycache__/
+*.py[cod]
+*.mbtiles
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.log
+.DS_Store
+Thumbs.db
+!docker-entrypoint.sh
+!**/docker-entrypoint.sh

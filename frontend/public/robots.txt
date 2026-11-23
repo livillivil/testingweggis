@@ -1,0 +1,10 @@
+# KMC-GIS-SERVER — robots policy (served at the site root by the Nginx gateway)
+# The public GeoPortal is open data; the workbench, API and the geo-gated
+# interactive map are application surfaces and must not be crawled.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /login
+Disallow: /geoportal/map

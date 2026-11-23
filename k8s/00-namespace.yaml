@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kmc-gis
+  labels:
+    app.kubernetes.io/name: kmc-gis-platform
+    app.kubernetes.io/part-of: kathmandu-metropolitan-city
+    app.kubernetes.io/environment: production
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: kmc-gis-quota
+  namespace: kmc-gis
+spec:
+  hard:
+    requests.cpu: "16"
+    requests.memory: 32Gi
+    limits.cpu: "32"
+    limits.memory: 64Gi
+    persistentvolumeclaims: "20"
+    services.loadbalancers: "2"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: kmc-gis-limits
+  namespace: kmc-gis
+spec:
+  limits:
+    - default:
+        cpu: "1000m"
+        memory: 1024Mi
+      defaultRequest:
+        cpu: "250m"
+        memory: 256Mi
+      type: Container

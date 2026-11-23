@@ -1,0 +1,16 @@
+apiVersion: v2
+name: kmc-gis
+description: Enterprise Helm Chart for Kathmandu Metropolitan City (KMC) Municipal WebGIS & Field Collection Platform
+type: application
+version: 2.4.0
+appVersion: "2.4.0"
+keywords:
+  - webgis
+  - postgis
+  - kathmandu
+  - spatial
+  - mapping
+  - field-data-collection
+maintainers:
+  - name: KMC Urban Infrastructure & GIS Division
+    email: gis@kathmandu.gov.np

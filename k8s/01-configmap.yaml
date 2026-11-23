@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kmc-config
+  namespace: kmc-gis
+  labels:
+    app.kubernetes.io/name: kmc-gis-platform
+data:
+  APP_NAME: "KMC-GIS-SERVER"
+  APP_ENV: "production"
+  POSTGRES_DB: "kmc_gis"
+  POSTGRES_USER: "kmc_user"
+  POSTGRES_HOST: "pgbouncer"
+  POSTGRES_PORT: "5432"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  TILESERVER_INTERNAL_URL: "http://tileserver:8080"
+  MARTIN_INTERNAL_URL: "http://martin:3000"
+  PUBLIC_API_URL: "/api"
+  PUBLIC_TILE_URL: "/tiles"
+  MAX_UPLOAD_SIZE_MB: "1048576"
+  GEO_GATE_MODE: "monitor"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
+  REFRESH_TOKEN_EXPIRE_DAYS: "7"
+  ADMIN_USERNAME: "KmcSuperUser2083"
+  ADMIN_EMAIL: "admin@kmc.gov.np"
+  MASTER_ADMIN_USERNAME: "KmcMasterAdmin2083"
+  MASTER_ADMIN_EMAIL: "master@kmc.gov.np"

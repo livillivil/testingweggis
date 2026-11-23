@@ -1,0 +1,406 @@
+# ============================================================
+# KMC-GIS-SERVER Production Docker Swarm Stack (docker-compose.swarm.yml)
+# Golden Practice Deployment for `docker stack deploy -c docker-compose.swarm.yml kmc-gis`
+#
+# Golden Rules Enforced:
+# 1. Encrypted at Rest & In Transit:
+#    All secrets are stored in the Swarm Manager Raft log (AES-GCM-256) and
+#    delivered over mutual TLS (mTLS) only to nodes running authorized tasks.
+# 2. In-Memory tmpfs Runtime Mounts:
+#    Secrets are mounted exclusively in RAM at `/run/secrets/<target>` with
+#    `mode: 0400` and non-root UID/GID (`10001:10001`).
+# 3. Immutable Versioned Secret Names (`_${SECRET_VERSION:-v1}`):
+#    Enables zero-downtime secret rotation via:
+#      ./scripts/manage-swarm-secrets.sh rotate <secret_name> v1 v2
+# 4. Encrypted Overlay Network:
+#    Internal service traffic traverses an IPSEC-encrypted overlay network (`driver_opts: encrypted: "true"`).
+# ============================================================
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kmc_gis}
+      POSTGRES_USER: ${POSTGRES_USER:-kmc_user}
+      POSTGRES_PASSWORD_FILE: /run/secrets/kmc_postgres_password
+    secrets:
+      - source: kmc_postgres_password
+        target: kmc_postgres_password
+        mode: 0400
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=300"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=32MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_cache_size=2GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      - kmc_swarm_overlay
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4096M
+
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.23.1-p0
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-kmc_gis}
+      DB_USER: ${POSTGRES_USER:-kmc_user}
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "50"
+      MIN_POOL_SIZE: "10"
+      RESERVE_POOL_SIZE: "20"
+      MAX_DB_CONNECTIONS: "250"
+      SERVER_IDLE_TIMEOUT: "300"
+      CLIENT_IDLE_TIMEOUT: "300"
+    secrets:
+      - source: kmc_postgres_password
+        target: kmc_postgres_password
+        mode: 0400
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export DB_PASSWORD="$$(tr -d '\r\n' < /run/secrets/kmc_postgres_password)"
+        exec /entrypoint.sh /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+    networks:
+      - kmc_swarm_overlay
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $${DB_USER:-kmc_user} -d $${DB_NAME:-kmc_gis}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  redis:
+    image: redis:7.4-alpine
+    environment:
+      REDIS_PASSWORD_FILE: /run/secrets/kmc_redis_password
+    secrets:
+      - source: kmc_redis_password
+        target: kmc_redis_password
+        # The redis entrypoint drops to uid 999 / gid 1000 before reading the
+        # secret; a root-only 0400 grant would make the file unreadable.
+        uid: "999"
+        gid: "1000"
+        mode: 0400
+    command: >
+      sh -c 'exec redis-server --requirepass "$$(tr -d "\r\n" < /run/secrets/kmc_redis_password)" --maxmemory 512mb --maxmemory-policy allkeys-lru --appendonly yes'
+    volumes:
+      - redis_data:/data
+    networks:
+      - kmc_swarm_overlay
+    deploy:
+      mode: replicated
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  backend:
+    image: kmc-gis/backend:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "${UVICORN_WORKERS:-2}"]
+    environment:
+      APP_NAME: ${APP_NAME:-KMC-GIS-SERVER}
+      APP_ENV: production
+      ENFORCE_SWARM_SECRETS: "true"
+      SECRET_VERSION: ${SECRET_VERSION:-v1}
+      POSTGRES_DB: ${POSTGRES_DB:-kmc_gis}
+      POSTGRES_USER: ${POSTGRES_USER:-kmc_user}
+      POSTGRES_PASSWORD_FILE: /run/secrets/kmc_postgres_password
+      POSTGRES_HOST: ${POSTGRES_HOST:-pgbouncer}
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD_FILE: /run/secrets/kmc_redis_password
+      SECRET_KEY_FILE: /run/secrets/kmc_jwt_secret_key
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
+      REFRESH_TOKEN_EXPIRE_DAYS: "7"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-KmcSuperAdmin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@kmc.gov.np}
+      ADMIN_PASSWORD_FILE: /run/secrets/kmc_admin_password
+      ADMIN_FULL_NAME: ${ADMIN_FULL_NAME:-}
+      MASTER_ADMIN_USERNAME: ${MASTER_ADMIN_USERNAME:-KmcMasterAdmin}
+      MASTER_ADMIN_EMAIL: ${MASTER_ADMIN_EMAIL:-master@kmc.gov.np}
+      MASTER_ADMIN_PASSWORD_FILE: /run/secrets/kmc_master_admin_password
+      MASTER_ADMIN_FULL_NAME: ${MASTER_ADMIN_FULL_NAME:-}
+      TILESERVER_INTERNAL_URL: http://tileserver:8080
+      MARTIN_INTERNAL_URL: http://martin:3000
+      GEOSERVER_INTERNAL_URL: http://geoserver:8080/geoserver
+      PUBLIC_API_URL: /api
+      PUBLIC_TILE_URL: /tiles
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-1048576}
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-}
+      GEO_GATE_MODE: ${GEO_GATE_MODE:-monitor}
+      GEOIP_COUNTRY_DB: /app/geoip/GeoLite2-Country.mmdb
+      GEOIP_ASN_DB: /app/geoip/GeoLite2-ASN.mmdb
+      GEOIP_BLOCKED_ASNS: ${GEOIP_BLOCKED_ASNS:-}
+      TMPDIR: /tileserver-data/temp
+      UPLOAD_DIR: /app/uploads
+    secrets:
+      - source: kmc_postgres_password
+        target: kmc_postgres_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: kmc_redis_password
+        target: kmc_redis_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: kmc_jwt_secret_key
+        target: kmc_jwt_secret_key
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: kmc_admin_password
+        target: kmc_admin_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+      - source: kmc_master_admin_password
+        target: kmc_master_admin_password
+        uid: "10001"
+        gid: "10001"
+        mode: 0400
+    volumes:
+      - ./data/tileserver:/tileserver-data
+      - ./data/uploads:/app/uploads
+      - ./data/geoip:/app/geoip:ro
+    networks:
+      - kmc_swarm_overlay
+    deploy:
+      # The JSON state store is a single-writer resource: running two replicas
+      # would fork the authoritative STATE between tasks.
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: stop-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        order: stop-first
+      restart_policy:
+        condition: on-failure
+
+  martin:
+    image: ghcr.io/maplibre/martin:1.16.1
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kmc_gis}
+      POSTGRES_USER: ${POSTGRES_USER:-kmc_user}
+      POSTGRES_HOST: ${POSTGRES_HOST:-pgbouncer}
+      POSTGRES_PORT: "5432"
+      POSTGRES_PASSWORD_FILE: /run/secrets/kmc_postgres_password
+    secrets:
+      - source: kmc_postgres_password
+        target: kmc_postgres_password
+        mode: 0400
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        PG_PASS="$$(tr -d '\r\n' < /run/secrets/kmc_postgres_password)"
+        cat <<EOF > /tmp/martin.yaml
+        keep_alive: 75
+        worker_processes: 4
+        cache_size_mb: 1024
+        postgres:
+          connection_string: "postgresql://$${POSTGRES_USER:-kmc_user}:$${PG_PASS}@$${POSTGRES_HOST:-pgbouncer}:$${POSTGRES_PORT:-5432}/$${POSTGRES_DB:-kmc_gis}"
+          pool_size: 50
+          auto_bounds: quick
+          auto_publish:
+            tables:
+              from_schemas:
+                - "public"
+        EOF
+        exec martin -c /tmp/martin.yaml
+    networks:
+      - kmc_swarm_overlay
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    deploy:
+      mode: replicated
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+
+  tileserver:
+    image: maptiler/tileserver-gl:v5.7.0
+    volumes:
+      - ./data/tileserver:/data
+    networks:
+      - kmc_swarm_overlay
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/').then(r => process.exit(r.status < 500 ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  geoserver:
+    image: docker.osgeo.org/geoserver:2.25.4
+    environment:
+      GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER:-admin}
+    secrets:
+      - source: kmc_geoserver_admin_password
+        target: kmc_geoserver_admin_password
+        mode: 0400
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        export GEOSERVER_ADMIN_PASSWORD="$$(tr -d '\r\n' < /run/secrets/kmc_geoserver_admin_password)"
+        exec bash /opt/startup.sh
+    volumes:
+      - ./data/geoserver:/opt/geoserver_data
+    networks:
+      - kmc_swarm_overlay
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/geoserver/web/ >/dev/null 2>&1 || wget -qO- http://127.0.0.1:8080/geoserver/web/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+    deploy:
+      mode: replicated
+      replicas: 1
+
+  frontend:
+    image: kmc-gis/frontend:${IMAGE_TAG:-latest}
+    environment:
+      APP_ENV: production
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
+      API_URL: /api
+      TILE_URL: /tiles
+      GEOPORTAL_URL: /geoportal
+      BACKEND_INTERNAL_URL: http://backend:8000
+      TILESERVER_INTERNAL_URL: http://tileserver:8080
+      GEOPORTAL_INTERNAL_URL: http://geoportal:3000
+      MARTIN_INTERNAL_URL: http://martin:3000
+      GEOSERVER_INTERNAL_URL: http://geoserver:8080/geoserver
+    networks:
+      - kmc_swarm_overlay
+    deploy:
+      mode: replicated
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+
+  geoportal:
+    image: kmc-gis/geoportal:${IMAGE_TAG:-latest}
+    environment:
+      APP_ENV: production
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
+      API_URL: /api
+      TILE_URL: /tiles
+      GEOPORTAL_URL: /geoportal
+      BACKEND_INTERNAL_URL: http://backend:8000
+      TILESERVER_INTERNAL_URL: http://tileserver:8080
+      MARTIN_INTERNAL_URL: http://martin:3000
+      GEOSERVER_INTERNAL_URL: http://geoserver:8080/geoserver
+    networks:
+      - kmc_swarm_overlay
+    deploy:
+      mode: replicated
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+
+  nginx:
+    image: nginx:1.30.7-alpine
+    ports:
+      - "${HOST_PORT:-80}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/locations.inc:/etc/nginx/kmc-locations.inc:ro
+      - ./nginx/security-headers.inc:/etc/nginx/kmc-security-headers.inc:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./data/uploads:/var/kmc_uploads:ro
+    networks:
+      - kmc_swarm_overlay
+    deploy:
+      mode: replicated
+      replicas: 2
+      update_config:
+        parallelism: 1
+        order: start-first
+        failure_action: rollback
+
+# ============================================================
+# External Raft-Encrypted Docker Swarm Secrets (Immutable & Versioned)
+# Provision via: `./scripts/manage-swarm-secrets.sh init-swarm v1`
+# ============================================================
+secrets:
+  kmc_postgres_password:
+    external: true
+    name: kmc_postgres_password_${SECRET_VERSION:-v1}
+  kmc_redis_password:
+    external: true
+    name: kmc_redis_password_${SECRET_VERSION:-v1}
+  kmc_jwt_secret_key:
+    external: true
+    name: kmc_jwt_secret_key_${SECRET_VERSION:-v1}
+  kmc_admin_password:
+    external: true
+    name: kmc_admin_password_${SECRET_VERSION:-v1}
+  kmc_master_admin_password:
+    external: true
+    name: kmc_master_admin_password_${SECRET_VERSION:-v1}
+  kmc_geoserver_admin_password:
+    external: true
+    name: kmc_geoserver_admin_password_${SECRET_VERSION:-v1}
+
+volumes:
+  redis_data:
+    name: kmc_gis_server_redis_data
+
+networks:
+  kmc_swarm_overlay:
+    driver: overlay
+    attachable: true
+    driver_opts:
+      encrypted: "true"

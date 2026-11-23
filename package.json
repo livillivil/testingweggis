@@ -1,0 +1,21 @@
+{
+  "name": "kmc-gis-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "KMC-GIS-SERVER — Kathmandu Metropolitan City enterprise WebGIS, offline field PWA and public GeoPortal (Docker Compose stack: nginx, frontend, geoportal, backend, martin, tileserver, geoserver, postgres/PostGIS, redis).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test --test-isolation=none --disable-warning=MODULE_TYPELESS_PACKAGE_JSON frontend/src/lib/geometryEditing.test.js frontend/src/lib/swarmSecretsUtils.test.js frontend/src/lib/questionnaireUtils.test.js frontend/utils/spatialEngine.test.js",
+    "test:backend": "bash scripts/test-backend.sh",
+    "secrets:init": "bash scripts/manage-swarm-secrets.sh init-local",
+    "secrets:audit": "bash scripts/manage-swarm-secrets.sh audit",
+    "up": "docker compose up --build -d",
+    "down": "docker compose down",
+    "logs": "docker compose logs -f",
+    "config": "docker compose config -q",
+    "verify": "npm run config && npm test"
+  }
+}

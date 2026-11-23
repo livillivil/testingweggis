@@ -1,0 +1,33 @@
+{
+  "id": "/geoportal/",
+  "name": "काठमाडौँ महानगरपालिका खुला भू-स्थानिक पोर्टल (KMC Public GeoPortal)",
+  "short_name": "KMC GeoPortal",
+  "description": "Official open geospatial portal of Kathmandu Metropolitan City — municipal map layers, ward analytics and open spatial data (32 wards).",
+  "start_url": "/geoportal/",
+  "scope": "/geoportal/",
+  "display": "standalone",
+  "background_color": "#032B69",
+  "theme_color": "#0447AF",
+  "orientation": "any",
+  "lang": "ne",
+  "icons": [
+    {
+      "src": "/geoportal/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/geoportal/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/geoportal/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

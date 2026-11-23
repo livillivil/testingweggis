@@ -1,0 +1,123 @@
+# Default values for kmc-gis enterprise deployment
+global:
+  environment: production
+  namespace: kmc-gis
+
+backend:
+  replicaCount: 3
+  image:
+    repository: kmc-gis/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+frontend:
+  replicaCount: 2
+  image:
+    repository: kmc-gis/frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+
+geoportal:
+  replicaCount: 2
+  image:
+    repository: kmc-gis/geoportal
+    tag: latest
+    pullPolicy: IfNotPresent
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+
+pgbouncer:
+  replicaCount: 2
+  image:
+    repository: edoburu/pgbouncer
+    tag: latest
+  poolMode: session
+  maxClientConn: 2000
+  defaultPoolSize: 50
+
+postgres:
+  image:
+    repository: postgis/postgis
+    tag: 16-3.4
+  persistence:
+    size: 100Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+
+redis:
+  image:
+    repository: redis
+    tag: 7.4-alpine
+  persistence:
+    size: 10Gi
+
+martin:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/maplibre/martin
+    tag: 1.16.1
+
+tileserver:
+  replicaCount: 2
+  image:
+    repository: maptiler/tileserver-gl
+    tag: v5.7.0
+  persistence:
+    size: 200Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: gis.kathmandu.gov.np
+      paths:
+        - path: /geoportal
+          pathType: Prefix
+          service: geoportal
+        - path: /api
+          pathType: Prefix
+          service: backend
+        - path: /tiles
+          pathType: Prefix
+          service: tileserver
+        - path: /martin
+          pathType: Prefix
+          service: martin
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls:
+    - secretName: kmc-gis-tls-cert
+      hosts:
+        - gis.kathmandu.gov.np

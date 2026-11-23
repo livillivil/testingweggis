@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: kmc-gis
+  labels:
+    app.kubernetes.io/name: kmc-gis-platform
+    app.kubernetes.io/component: connection-pooler
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kmc-gis-platform
+      app.kubernetes.io/component: connection-pooler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kmc-gis-platform
+        app.kubernetes.io/component: connection-pooler
+    spec:
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: pgbouncer
+          env:
+            - name: DB_HOST
+              value: "postgres"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: kmc-config
+                  key: POSTGRES_DB
+            - name: DB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: kmc-config
+                  key: POSTGRES_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kmc-secrets
+                  key: POSTGRES_PASSWORD
+            - name: AUTH_TYPE
+              value: "scram-sha-256"
+            - name: POOL_MODE
+              value: "session"
+            - name: MAX_CLIENT_CONN
+              value: "2000"
+            - name: DEFAULT_POOL_SIZE
+              value: "50"
+            - name: MIN_POOL_SIZE
+              value: "10"
+            - name: RESERVE_POOL_SIZE
+              value: "20"
+            - name: MAX_DB_CONNECTIONS
+              value: "250"
+            - name: SERVER_IDLE_TIMEOUT
+              value: "300"
+            - name: CLIENT_IDLE_TIMEOUT
+              value: "300"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1024Mi"
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -h 127.0.0.1 -p 5432 -U kmc_user -d kmc_gis
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -h 127.0.0.1 -p 5432 -U kmc_user -d kmc_gis
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: kmc-gis
+  labels:
+    app.kubernetes.io/name: kmc-gis-platform
+    app.kubernetes.io/component: connection-pooler
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: pgbouncer
+  selector:
+    app.kubernetes.io/name: kmc-gis-platform
+    app.kubernetes.io/component: connection-pooler

@@ -1,0 +1,37 @@
+# ============================================================
+# KMC-GIS-SERVER — OPTIONAL local debugging override
+#
+# Golden rule: the base docker-compose.yml publishes ONLY the nginx HTTP
+# ingress (HOST_PORT). This override is for developers who need to hit a
+# service directly; every port is bound to loopback (127.0.0.1) so it is
+# never exposed on the network.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Canonical URLs (always use these, even in development):
+#   http://localhost/                -> field PWA + admin console
+#   http://localhost/geoportal       -> public GeoPortal
+#   http://localhost/api/...         -> FastAPI backend
+#   http://localhost/geoserver/...   -> GeoServer
+#   http://localhost/martin/...      -> Martin MVT
+#   http://localhost/tiles/...       -> TileServer-GL
+#
+# The direct ports below are debug-only mirrors of the same services.
+# ============================================================
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+
+  backend:
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+
+  geoportal:
+    ports:
+      - "127.0.0.1:${GEOPORTAL_PORT:-3001}:3000"

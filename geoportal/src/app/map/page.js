@@ -1,0 +1,354 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import GeoPortalNavbar from '../../components/GeoPortalNavbar';
+import GeoPortalMap from '../../components/GeoPortalMap';
+import LayerCatalogPanel from '../../components/LayerCatalogPanel';
+import AnalyticsPanel from '../../components/AnalyticsPanel';
+import MetadataModal from '../../components/MetadataModal';
+import FeatureInspectorModal from '../../components/FeatureInspectorModal';
+import AuthModal from '../../components/AuthModal';
+import LayerAccessModal from '../../components/LayerAccessModal';
+import { geoportalAPI, authAPI, systemAPI } from '../../lib/api';
+import { ensureGeoPass } from '../../lib/geoSignals';
+
+export default function GeoPortalHomePage() {
+  const [catalog, setCatalog] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+
+  // Active layers state (All layers turned off by default as requested)
+  const [activeLayerIds, setActiveLayerIds] = useState(new Set());
+  const [layerOpacities, setLayerOpacities] = useState({});
+  // Polygon Layer Outlines state (Default ON for polygon vector layers)
+  const [layerOutlines, setLayerOutlines] = useState({});
+  const [zoomToLayerTrigger, setZoomToLayerTrigger] = useState(null);
+
+  // Basemap state
+  const [activeBasemap, setActiveBasemap] = useState('osm');
+  const [basemapOpacity, setBasemapOpacity] = useState(100);
+
+  // Collapsible panels state (collapsed by default as requested)
+  const [catalogCollapsed, setCatalogCollapsed] = useState(true);
+  const [analyticsCollapsed, setAnalyticsCollapsed] = useState(true);
+  const [selectedAnalyticsLayerId, setSelectedAnalyticsLayerId] = useState(null);
+  const [currentMapExtent, setCurrentMapExtent] = useState(null);
+
+  // Modals
+  const [metadataModalLayer, setMetadataModalLayer] = useState(null);
+  const [inspectedFeature, setInspectedFeature] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [configuringLayer, setConfiguringLayer] = useState(null);
+
+  // MasterAdmin kill-switch: leave the map when the public portal is disabled.
+  useEffect(() => {
+    let alive = true;
+    systemAPI.getRuntimeConfig()
+      .then((res) => {
+        if (alive && res.data?.geoportal_enabled === false) {
+          window.location.href = '/geoportal';
+        }
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  // Geo World entry gate: verify the Nepal geo-pass; staff sessions get it
+  // re-minted silently, everyone else returns to the landing gate.
+  // (nginx + the data APIs enforce the same gate server-side.)
+  useEffect(() => {
+    ensureGeoPass().then((ok) => {
+      if (!ok) window.location.href = '/geoportal?denied=1';
+    });
+  }, []);
+
+  // Check current user session on mount
+  useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('kmc_access_token') : null;
+    if (token) {
+      authAPI.me()
+        .then((res) => {
+          setUser(res.data);
+        })
+        .catch(() => {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('kmc_access_token');
+            localStorage.removeItem('kmc_refresh_token');
+            localStorage.removeItem('kmc_user');
+          }
+          setUser(null);
+        });
+    }
+  }, []);
+
+  // Fetch Catalog respecting current user role & authentication
+  const fetchCatalog = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await geoportalAPI.getCatalog();
+      setCatalog(res.data);
+
+      // Honour each layer's administrator-set default visibility.
+      // Order default active layers: rasters first, then vectors, so vectors start on top of rasters.
+      const defaultActive = new Set();
+      const initialOpacities = {};
+
+      // 1. Rasters first
+      res.data.categories?.forEach((cat) => {
+        cat.layers?.forEach((lyr) => {
+          if (lyr.type === 'raster') {
+            const key = `${lyr.type}_${lyr.id}`;
+            initialOpacities[key] = lyr.opacity ?? 1.0;
+            if (lyr.default_visible === true) {
+              defaultActive.add(key);
+            }
+          }
+        });
+      });
+
+      // 2. Vectors second
+      res.data.categories?.forEach((cat) => {
+        cat.layers?.forEach((lyr) => {
+          if (lyr.type === 'vector') {
+            const key = `${lyr.type}_${lyr.id}`;
+            initialOpacities[key] = lyr.opacity ?? 1.0;
+            if (lyr.default_visible === true) {
+              defaultActive.add(key);
+            }
+          }
+        });
+      });
+
+      setActiveLayerIds(defaultActive);
+      setLayerOpacities(initialOpacities);
+      const firstActiveVector = res.data.categories
+        ?.flatMap((cat) => cat.layers)
+        .find((lyr) => lyr.type === 'vector' && defaultActive.has(`vector_${lyr.id}`));
+      setSelectedAnalyticsLayerId(firstActiveVector ? firstActiveVector.id : null);
+    } catch (err) {
+      console.error('Error loading GeoPortal catalog:', err);
+      // MasterAdmin halted the public portal -> landing page shows maintenance.
+      if (err?.response?.status === 503) {
+        window.location.href = '/geoportal';
+        return;
+      }
+      // Clear stale auth tokens on 401
+      if (err?.response?.status === 401) {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('kmc_access_token');
+          localStorage.removeItem('kmc_refresh_token');
+          localStorage.removeItem('kmc_user');
+        }
+        setUser(null);
+        return;
+      }
+      // Geo-pass expired or revoked mid-session -> back to the landing gate
+      if (err?.response?.status === 403) {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('kmc_access_token') : null;
+        if (!token) {
+          window.location.href = '/geoportal?denied=1';
+          return;
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCatalog();
+  }, [fetchCatalog, user]);
+
+  // Handle Logout
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('kmc_access_token');
+      localStorage.removeItem('kmc_refresh_token');
+      localStorage.removeItem('kmc_user');
+    }
+    setUser(null);
+  };
+
+  // Toggle Layer Visibility (Uses unique key `${layer.type}_${layer.id}` to eliminate ID collision)
+  const handleToggleLayer = (layer) => {
+    const key = `${layer.type}_${layer.id}`;
+    setActiveLayerIds((prev) => {
+      const next = new Set(prev);
+      const isNowActive = !next.has(key);
+      if (isNowActive) {
+        // Moving to the end of the Set places it at the top of the MapLibre layer stack
+        next.delete(key);
+        next.add(key);
+        if (layer.type === 'vector') {
+          setSelectedAnalyticsLayerId(layer.id);
+        }
+      } else {
+        next.delete(key);
+        // If the layer being deactivated was selected for analytics, clear it or pick another active vector layer
+        if (selectedAnalyticsLayerId === layer.id) {
+          const remainingVector = catalog?.categories
+            ?.flatMap((c) => c.layers)
+            ?.find((l) => l.type === 'vector' && next.has(`${l.type}_${l.id}`));
+          setSelectedAnalyticsLayerId(remainingVector ? remainingVector.id : null);
+        }
+      }
+      return next;
+    });
+  };
+
+  // Explicitly Select Layer for Analytics (also brings it to top)
+  const handleSelectLayerForAnalytics = (layerId) => {
+    setSelectedAnalyticsLayerId(layerId);
+    const key = `vector_${layerId}`;
+    setActiveLayerIds((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      next.add(key);
+      return next;
+    });
+  };
+
+  // Zoom to layer bounds/extent (also brings it to top)
+  const handleZoomToLayer = (layer) => {
+    if (!layer || !layer.bounds) return;
+    const key = `${layer.type}_${layer.id}`;
+    setActiveLayerIds((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      next.add(key);
+      return next;
+    });
+    setZoomToLayerTrigger({
+      bounds: layer.bounds,
+      timestamp: Date.now(),
+    });
+  };
+
+  // Opacity Change
+  const handleOpacityChange = (layerKey, opacity) => {
+    setLayerOpacities((prev) => ({
+      ...prev,
+      [layerKey]: opacity,
+    }));
+  };
+
+  // Toggle Polygon Layer Outline Mode (Defaults to ON)
+  const handleToggleOutline = (layerId) => {
+    setLayerOutlines((prev) => {
+      const current = prev[layerId] !== undefined ? prev[layerId] : true;
+      return {
+        ...prev,
+        [layerId]: !current,
+      };
+    });
+  };
+
+  const selectedLayerObj = catalog?.categories
+    ?.flatMap((c) => c.layers)
+    ?.find((l) => String(l.id) === String(selectedAnalyticsLayerId));
+
+  return (
+    <div className="w-full h-full flex flex-col bg-slate-100 overflow-hidden font-sans">
+      {/* Public / Authenticated Header */}
+      <GeoPortalNavbar
+        catalog={catalog}
+        loading={loading}
+        onRefresh={fetchCatalog}
+        catalogCollapsed={catalogCollapsed}
+        onToggleCatalog={() => setCatalogCollapsed(!catalogCollapsed)}
+        analyticsCollapsed={analyticsCollapsed}
+        onToggleAnalytics={() => setAnalyticsCollapsed(!analyticsCollapsed)}
+        user={user}
+        onOpenLogin={() => setShowAuthModal(true)}
+        onLogout={handleLogout}
+      />
+
+      {/* Main Workspace Area */}
+      <main className="flex-1 relative overflow-hidden">
+        {/* Full-bleed OpenLayers Map */}
+        <GeoPortalMap
+          catalog={catalog}
+          activeLayerIds={activeLayerIds}
+          layerOpacities={layerOpacities}
+          layerOutlines={layerOutlines}
+          onExtentChange={setCurrentMapExtent}
+          onFeatureClick={setInspectedFeature}
+          activeBasemap={activeBasemap}
+          basemapOpacity={basemapOpacity}
+          zoomToLayerTrigger={zoomToLayerTrigger}
+          isAdmin={catalog?.is_admin === true}
+        />
+
+        {/* Floating Top-Right: Layer Catalog (Field Data style panel with Basemaps included) */}
+        <aside className="absolute top-4 right-4 z-30 pointer-events-auto flex flex-col items-end">
+          <LayerCatalogPanel
+            catalog={catalog}
+            activeLayerIds={activeLayerIds}
+            onToggleLayer={handleToggleLayer}
+            onOpacityChange={handleOpacityChange}
+            layerOpacities={layerOpacities}
+            layerOutlines={layerOutlines}
+            onToggleOutline={handleToggleOutline}
+            onSelectLayerForAnalytics={handleSelectLayerForAnalytics}
+            selectedAnalyticsLayerId={selectedAnalyticsLayerId}
+            onZoomToLayer={handleZoomToLayer}
+            onOpenMetadata={setMetadataModalLayer}
+            onConfigureLayer={(layer) => setConfiguringLayer(layer)}
+            isCollapsed={catalogCollapsed}
+            onToggleCollapse={() => setCatalogCollapsed(!catalogCollapsed)}
+            user={user}
+            activeBasemap={activeBasemap}
+            onBasemapChange={setActiveBasemap}
+            basemapOpacity={basemapOpacity}
+            onBasemapOpacityChange={setBasemapOpacity}
+          />
+        </aside>
+
+        {/* Floating Bottom-Left: Infographics & Analytics (Responsive on all devices) */}
+        <aside className="absolute bottom-4 sm:bottom-6 left-4 z-30 pointer-events-auto max-w-[calc(100vw-2rem)]">
+          <AnalyticsPanel
+            layerId={selectedAnalyticsLayerId}
+            layerName={selectedLayerObj?.name}
+            mapExtent={currentMapExtent}
+            isCollapsed={analyticsCollapsed}
+            onToggleCollapse={() => setAnalyticsCollapsed(!analyticsCollapsed)}
+          />
+        </aside>
+
+        {/* Feature Inspector Popup (filters properties based on allowed attributes) */}
+        <FeatureInspectorModal
+          inspectedFeature={inspectedFeature}
+          catalog={catalog}
+          onClose={() => setInspectedFeature(null)}
+        />
+      </main>
+
+      {/* Layer Metadata Modal */}
+      <MetadataModal
+        layer={metadataModalLayer}
+        isOpen={!!metadataModalLayer}
+        onClose={() => setMetadataModalLayer(null)}
+      />
+
+      {/* User Login Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onSuccess={(loggedUser) => {
+          setUser(loggedUser);
+          setShowAuthModal(false);
+          // Staff login: make sure the geo-pass cookie exists for map tiles
+          ensureGeoPass().finally(() => fetchCatalog());
+        }}
+      />
+
+      {/* GIS Admin Layer & Attribute Access Management Modal */}
+      <LayerAccessModal
+        layer={configuringLayer}
+        isOpen={!!configuringLayer}
+        onClose={() => setConfiguringLayer(null)}
+        onSaved={fetchCatalog}
+      />
+    </div>
+  );
+}
